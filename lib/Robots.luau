@@ -19,7 +19,6 @@ local SCREEN_GUI_NAME = "TrustSDKRobotsCaptcha"
 
 local DEFAULT_CODE_LENGTH = 6
 local DEFAULT_MAX_ATTEMPTS = 3
-local DEFAULT_TIMEOUT_SECONDS = 90
 
 type TransportModule = typeof(Transport)
 
@@ -75,7 +74,7 @@ type ClientActiveChallenge = {
 	DisplayCode: string,
 	MaxAttempts: number,
 	RemainingAttempts: number,
-	TimeoutSeconds: number,
+	TimeoutSeconds: number?,
 	LockMovement: boolean,
 	AllowClose: boolean,
 	Theme: CaptchaTheme?,
@@ -465,7 +464,7 @@ local function mountChallenge(packet: {[string]: any})
 		DisplayCode = packet.DisplayCode,
 		MaxAttempts = packet.MaxAttempts,
 		RemainingAttempts = packet.MaxAttempts,
-		TimeoutSeconds = packet.TimeoutSeconds,
+		TimeoutSeconds = if type(packet.TimeoutSeconds) == "number" then packet.TimeoutSeconds else nil,
 		LockMovement = packet.LockMovement == true,
 		AllowClose = packet.AllowClose == true,
 		Theme = packet.Theme,
@@ -742,13 +741,15 @@ function Robots:SummonCaptcha(player: Player, options: CaptchaOptions?): string
 
 	local challengeId = HttpService:GenerateGUID(false)
 	local codeLength = math.max(4, options and options.CodeLength or DEFAULT_CODE_LENGTH)
-	local timeoutSeconds = math.max(10, options and options.TimeoutSeconds or DEFAULT_TIMEOUT_SECONDS)
+	local timeoutSeconds = if options and options.TimeoutSeconds ~= nil
+		then math.max(10, options.TimeoutSeconds)
+		else nil
 	local challenge: ActiveChallenge = {
 		Id = challengeId,
 		Answer = randomCaptchaCode(codeLength),
 		Attempts = 0,
 		MaxAttempts = math.max(1, options and options.MaxAttempts or DEFAULT_MAX_ATTEMPTS),
-		ExpiresAt = os.clock() + timeoutSeconds,
+		ExpiresAt = if timeoutSeconds then os.clock() + timeoutSeconds else math.huge,
 		LockMovement = if options and options.LockMovement == false then false else options ~= nil and options.LockMovement == true,
 		FailOnMovement = if options and options.FailOnMovement ~= nil then options.FailOnMovement else true,
 		AllowClose = if options and options.AllowClose ~= nil then options.AllowClose else false,
@@ -772,11 +773,13 @@ function Robots:SummonCaptcha(player: Player, options: CaptchaOptions?): string
 
 	startMovementMonitor(player, challenge)
 
-	task.delay(timeoutSeconds, function()
-		if serverState and serverState.ActiveChallengesByPlayer[player] == challenge then
-			failChallenge(player, challenge, "timeout")
-		end
-	end)
+	if timeoutSeconds then
+		task.delay(timeoutSeconds, function()
+			if serverState and serverState.ActiveChallengesByPlayer[player] == challenge then
+				failChallenge(player, challenge, "timeout")
+			end
+		end)
+	end
 
 	return challenge.Id
 end

@@ -16,7 +16,7 @@ local SHA256 = Cryptography.Hashing.SHA2.SHA256
 local CSPRNG = Cryptography.Utilities.CSPRNG
 local Conversions = Cryptography.Utilities.Conversions
 
-local REMOTE_FOLDER_NAME = "TrustSDK"
+local REMOTE_FOLDER_NAME = "TrustSDKRemotes"
 local HANDSHAKE_REQUEST_NAME = "HandshakeRequest"
 local HANDSHAKE_COMPLETE_NAME = "HandshakeComplete"
 local SECURE_MESSAGE_NAME = "SecureMessage"
@@ -27,6 +27,7 @@ local SERVER_PUBLIC_KEY_ATTRIBUTE = "ServerEd25519PublicKeyHex"
 local SERVER_STATIC_PUBLIC_KEY_ATTRIBUTE = "ServerStaticX25519PublicKeyHex"
 local PLAYER_IDENTITY_STORE_NAME = "TrustSDK.PlayerIdentities"
 local REKEY_INTERVAL_SECONDS = 300
+local REPLICATION_TIMEOUT_SECONDS = 15
 
 local HKDF_INFO = buffer.fromstring("TrustSDK.SessionKey.v2")
 local MESSAGE_AAD = buffer.fromstring("TrustSDK.ChaCha20Poly1305.v2")
@@ -42,12 +43,14 @@ export type ServerConfig = {
 	OnServerMessage: ((Player, buffer) -> ())?,
 	RemoteParent: Instance?,
 	PlayerIdentityStoreName: string?,
+	Debug: boolean?,
 }
 
 export type ClientConfig = {
 	ServerEd25519PublicKey: buffer | string?,
 	OnClientMessage: ((buffer) -> ())?,
 	RemoteParent: Instance?,
+	Debug: boolean?,
 }
 
 type PlayerIdentityRecord = {
@@ -95,6 +98,7 @@ type ServerState = {
 	SessionsByPlayer: {[Player]: Session},
 	ServerMessageListeners: {[string]: (Player, buffer) -> boolean?},
 	OnServerMessage: ((Player, buffer) -> ())?,
+	Debug: boolean,
 }
 
 type ClientState = {
@@ -108,6 +112,7 @@ type ClientState = {
 	Session: Session?,
 	ClientMessageListeners: {[string]: (buffer) -> boolean?},
 	OnClientMessage: ((buffer) -> ())?,
+	Debug: boolean,
 }
 
 local Transport = {}
@@ -226,6 +231,32 @@ local function buildRekeySignatureInput(requestId: string, serverEphemeralPublic
 	return concatBuffers(REKEY_CONTEXT, buffer.fromstring(requestId), serverEphemeralPublic)
 end
 
+local function debugPayloadString(payload: buffer): string
+	local ok, result = pcall(function()
+		return buffer.tostring(payload)
+	end)
+
+	if ok then
+		return result
+	end
+
+	return string.format("<buffer:%d bytes>", buffer.len(payload))
+end
+
+local function debugLogPacket(scope: string, direction: string, sequence: number, nonce: buffer, ciphertext: buffer, tag: buffer, signature: buffer, plaintext: buffer)
+	print(string.format(
+		"[TrustSDK Debug][%s][%s] seq=%d nonce=%s ciphertext=%s tag=%s signature=%s",
+		scope,
+		direction,
+		sequence,
+		Conversions.ToHex(nonce),
+		Conversions.ToHex(ciphertext),
+		Conversions.ToHex(tag),
+		Conversions.ToHex(signature)
+	))
+	print(string.format("[TrustSDK Debug][%s][%s] parsed=%s", scope, direction, debugPayloadString(plaintext)))
+end
+
 local function dispatchServerMessage(state: ServerState, player: Player, plaintext: buffer)
 	local handled = false
 
@@ -297,21 +328,45 @@ local function getOrCreateRemoteEvent(parent: Instance, name: string): RemoteEve
 end
 
 local function getRemoteFolder(parent: Instance): Folder
-	local folder = parent:FindFirstChild(REMOTE_FOLDER_NAME)
+	local folder = if RunService:IsClient()
+		then parent:WaitForChild(REMOTE_FOLDER_NAME, REPLICATION_TIMEOUT_SECONDS)
+		else parent:FindFirstChild(REMOTE_FOLDER_NAME)
 	assert(folder and folder:IsA("Folder"), string.format("Expected %s folder under %s", REMOTE_FOLDER_NAME, parent:GetFullName()))
 	return folder
 end
 
 local function getRemoteFunction(parent: Instance, name: string): RemoteFunction
-	local remote = parent:FindFirstChild(name)
+	local remote = if RunService:IsClient()
+		then parent:WaitForChild(name, REPLICATION_TIMEOUT_SECONDS)
+		else parent:FindFirstChild(name)
 	assert(remote and remote:IsA("RemoteFunction"), string.format("Expected RemoteFunction %s", name))
 	return remote
 end
 
 local function getRemoteEvent(parent: Instance, name: string): RemoteEvent
-	local remote = parent:FindFirstChild(name)
+	local remote = if RunService:IsClient()
+		then parent:WaitForChild(name, REPLICATION_TIMEOUT_SECONDS)
+		else parent:FindFirstChild(name)
 	assert(remote and remote:IsA("RemoteEvent"), string.format("Expected RemoteEvent %s", name))
 	return remote
+end
+
+local function waitForStringAttribute(instance: Instance, attributeName: string): string
+	local attributeValue = instance:GetAttribute(attributeName)
+	if type(attributeValue) == "string" then
+		return attributeValue
+	end
+
+	local deadline = os.clock() + REPLICATION_TIMEOUT_SECONDS
+	while os.clock() < deadline do
+		task.wait(0.1)
+		attributeValue = instance:GetAttribute(attributeName)
+		if type(attributeValue) == "string" then
+			return attributeValue
+		end
+	end
+
+	error(string.format("Timed out waiting for attribute %s on %s", attributeName, instance:GetFullName()))
 end
 
 local function publishServerPublicKeys(state: ServerState)
@@ -430,6 +485,7 @@ local function buildServerState(config: ServerConfig?): ServerState
 		SessionsByPlayer = {},
 		ServerMessageListeners = {},
 		OnServerMessage = if config then config.OnServerMessage else nil,
+		Debug = if config and config.Debug == true then true else false,
 	}
 
 	publishServerPublicKeys(state)
@@ -559,6 +615,10 @@ local function buildServerState(config: ServerConfig?): ServerState
 			return
 		end
 
+		if state.Debug then
+			debugLogPacket("Server", string.format("recv:%s", player.Name), sequence, nonce, ciphertext, tag, signature, plaintext)
+		end
+
 		session.LastInboundSequence = sequence
 
 		dispatchServerMessage(state, player, plaintext)
@@ -592,8 +652,7 @@ local function resolveServerPublicKey(config: ClientConfig?, handshakeFolder: Fo
 		return configured
 	end
 
-	local publishedHex = handshakeFolder:GetAttribute(SERVER_PUBLIC_KEY_ATTRIBUTE)
-	assert(type(publishedHex) == "string", "ServerEd25519PublicKey is required on the client")
+	local publishedHex = waitForStringAttribute(handshakeFolder, SERVER_PUBLIC_KEY_ATTRIBUTE)
 	return Conversions.FromHex(publishedHex)
 end
 
@@ -612,6 +671,7 @@ local function buildClientState(config: ClientConfig?): ClientState
 		Session = nil,
 		ClientMessageListeners = {},
 		OnClientMessage = if config then config.OnClientMessage else nil,
+		Debug = if config and config.Debug == true then true else false,
 	}
 
 	state.SecureMessage.OnClientEvent:Connect(function(sequence: number, nonce: buffer, ciphertext: buffer, tag: buffer, signature: buffer)
@@ -645,6 +705,10 @@ local function buildClientState(config: ClientConfig?): ClientState
 		if not plaintext then
 			warn("Failed to decrypt secure message from server")
 			return
+		end
+
+		if state.Debug then
+			debugLogPacket("Client", "recv:server", sequence, nonce, ciphertext, tag, signature, plaintext)
 		end
 
 		session.LastInboundSequence = sequence
@@ -826,6 +890,9 @@ function Transport:SendToClient(player: Player, payload: buffer | string)
 	local signature = EdDSA.Sign(signatureInput, serverState.IdentitySecretKey, serverState.IdentityPublicKey)
 
 	session.NextOutboundSequence += 1
+	if serverState.Debug then
+		debugLogPacket("Server", string.format("send:%s", player.Name), sequence, nonce, ciphertext, tag, signature, plaintext)
+	end
 	serverState.SecureMessage:FireClient(player, sequence, nonce, ciphertext, tag, signature)
 end
 
@@ -852,6 +919,9 @@ function Transport:SendToServer(payload: buffer | string)
 	local signature = EdDSA.Sign(signatureInput, session.PlayerIdentitySecretKey, session.PlayerIdentityPublicKey)
 
 	session.NextOutboundSequence += 1
+	if clientState.Debug then
+		debugLogPacket("Client", "send:server", sequence, nonce, ciphertext, tag, signature, plaintext)
+	end
 	clientState.SecureMessage:FireServer(sequence, nonce, ciphertext, tag, signature)
 end
 

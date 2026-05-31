@@ -116,7 +116,10 @@ The server treats reported tampering as a challenge failure and triggers `OnTamp
 
 ## Timeout Handling
 
-Each captcha can have a timeout using `TimeoutSeconds`.
+Timeouts are optional.
+
+If `TimeoutSeconds` is provided, the captcha will expire after that many seconds.
+If `TimeoutSeconds` is omitted, the captcha remains active until it is solved, dismissed, tampered with, or otherwise failed.
 
 When the timeout expires:
 

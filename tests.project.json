@@ -14,10 +14,19 @@
 				"$path": "Packages"
 			}
 		},
+		"StarterPlayer": {
+			"$className": "StarterPlayer",
+			"StarterPlayerScripts": {
+				"$className": "StarterPlayerScripts",
+				"Tests": {
+					"$path": "src/client"
+				}
+			}
+		},
 		"ServerScriptService": {
 			"$className": "ServerScriptService",
 			"Tests": {
-				"$path": "tests"
+				"$path": "src/server"
 			}
 		}
 	}

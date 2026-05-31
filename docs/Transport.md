@@ -267,7 +267,7 @@ Transport:SendToServer("hello from client")
 
 Under the configured `RemoteParent`, the package creates a folder:
 
-- `TrustSDK`
+- `TrustSDKRemotes`
 
 Inside it:
 
