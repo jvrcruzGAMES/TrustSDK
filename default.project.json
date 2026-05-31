@@ -4,6 +4,12 @@
         "$className": "DataModel",
         "ReplicatedStorage": {
             "$className": "ReplicatedStorage",
+            "TrustSDK": {
+                "$path": "lib"
+            },
+            "DevPackages": {
+                "$path": "DevPackages"
+            },
             "Packages": {
                 "$path": "Packages"
             }
