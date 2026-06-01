@@ -25,6 +25,8 @@ local e = React.createElement
 local localPlayer = Players.LocalPlayer
 assert(localPlayer, "IdentityTest requires LocalPlayer")
 
+print("[TrustSDK Identity Test][Client] Booting identity test client harness")
+
 local pendingRequests: {[string]: {
 	Resolve: (any) -> (),
 	Reject: (string) -> (),
@@ -55,10 +57,12 @@ end
 local function initializeIdentityClient()
 	local ok, errorMessage = pcall(function()
 		Transport:Initialize()
+		print("[TrustSDK Identity Test][Client] Transport initialized")
 		Identity:Initialize({
 			Transport = Transport,
 			UseTransport = true,
 		})
+		print("[TrustSDK Identity Test][Client] Identity initialized in transport mode")
 	end)
 
 	if not ok then
@@ -74,6 +78,12 @@ Transport:AddClientMessageListener(TRANSPORT_LISTENER_ID, function(plaintext: bu
 		return false
 	end
 
+	print(string.format(
+		"[TrustSDK Identity Test][Client] Received packet action=%s requestId=%s",
+		tostring(packet.Action),
+		tostring(packet.RequestId)
+	))
+
 	if packet.Action ~= "response" then
 		return true
 	end
@@ -82,7 +92,10 @@ Transport:AddClientMessageListener(TRANSPORT_LISTENER_ID, function(plaintext: bu
 	local pending = pendingRequests[requestId]
 	if pending then
 		pendingRequests[requestId] = nil
+		print(string.format("[TrustSDK Identity Test][Client] Resolving requestId=%s", requestId))
 		pending.Resolve(packet.Payload)
+	else
+		warn(string.format("[TrustSDK Identity Test][Client] No pending request for requestId=%s", requestId))
 	end
 
 	return true
@@ -118,6 +131,11 @@ type StorageTestResponse = {
 
 local function invokeServer(payload: {[string]: any})
 	local requestId = HttpService:GenerateGUID(false)
+	print(string.format(
+		"[TrustSDK Identity Test][Client] Starting request action=%s requestId=%s",
+		tostring(payload.Action),
+		requestId
+	))
 
 	local bindable = Instance.new("BindableEvent")
 	local resolved = false
@@ -131,6 +149,7 @@ local function invokeServer(payload: {[string]: any})
 
 			resolved = true
 			responsePayload = response
+			print(string.format("[TrustSDK Identity Test][Client] Request resolved requestId=%s ok=%s", requestId, tostring(response and response.Ok)))
 			bindable:Fire()
 		end,
 		Reject = function(errorMessage: string)
@@ -143,14 +162,17 @@ local function invokeServer(payload: {[string]: any})
 				Ok = false,
 				Error = errorMessage,
 			}
+			warn(string.format("[TrustSDK Identity Test][Client] Request rejected requestId=%s error=%s", requestId, errorMessage))
 			bindable:Fire()
 		end,
 	}
 
 	task.spawn(function()
 		local deadline = os.clock() + REQUEST_TIMEOUT_SECONDS
+		local attempt = 0
 
 		while os.clock() < deadline do
+			attempt += 1
 			local ok, errorMessage = pcall(function()
 				Transport:SendToServer(encodePacket({
 					Action = payload.Action,
@@ -159,8 +181,22 @@ local function invokeServer(payload: {[string]: any})
 			end)
 
 			if ok then
+				print(string.format(
+					"[TrustSDK Identity Test][Client] Sent request action=%s requestId=%s attempt=%d",
+					tostring(payload.Action),
+					requestId,
+					attempt
+				))
 				return
 			end
+
+			warn(string.format(
+				"[TrustSDK Identity Test][Client] Send attempt failed action=%s requestId=%s attempt=%d error=%s",
+				tostring(payload.Action),
+				requestId,
+				attempt,
+				tostring(errorMessage)
+			))
 
 			task.wait(REQUEST_RETRY_INTERVAL_SECONDS)
 		end
@@ -513,6 +549,7 @@ end
 
 local function openIdentityPanel()
 	if screenGui or reactRoot then
+		print("[TrustSDK Identity Test][Client] Identity panel already open")
 		return
 	end
 
@@ -527,10 +564,12 @@ local function openIdentityPanel()
 
 	reactRoot = ReactRoblox.createRoot(screenGui)
 	reactRoot:render(e(IdentityPanel))
+	print("[TrustSDK Identity Test][Client] Identity panel opened")
 end
 
 localPlayer.Chatted:Connect(function(message)
 	if string.lower(message) == "!identity" then
+		print("[TrustSDK Identity Test][Client] Chat trigger received: !identity")
 		openIdentityPanel()
 	end
 end)

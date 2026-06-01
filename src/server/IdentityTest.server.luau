@@ -14,6 +14,8 @@ local MESSAGE_PREFIX = "__TrustSDK_IdentityTest__:"
 local BASE_URL_SECRET_NAME = "identity_base_url"
 local BEARER_TOKEN_SECRET_NAME = "identity_bearer_token"
 
+print("[TrustSDK Identity Test][Server] Booting identity test server harness")
+
 local function getConfiguredSecret(secretName: string)
 	local ok, secretOrError = pcall(function()
 		return HttpService:GetSecret(secretName)
@@ -34,6 +36,8 @@ if not baseUrlSecret or not bearerTokenSecret then
 	warn("[TrustSDK Identity Test] Identity test bootstrap skipped. Configure secrets identity_base_url and identity_bearer_token in Creator Dashboard.")
 	return
 end
+
+print("[TrustSDK Identity Test][Server] Loaded required secrets")
 
 local function buildAuthedHeaders(baseHeaders: {[string]: any}?): {[string]: any}
 	local headers = {}
@@ -111,6 +115,12 @@ local function serializeStorageItem(item)
 end
 
 local function sendResponse(player: Player, requestId: string, payload: {[string]: any})
+	print(string.format(
+		"[TrustSDK Identity Test][Server] Sending response to %s requestId=%s ok=%s",
+		player.Name,
+		requestId,
+		tostring(payload.Ok)
+	))
 	Transport:SendToClient(player, encodePacket({
 		Action = "response",
 		RequestId = requestId,
@@ -119,12 +129,18 @@ local function sendResponse(player: Player, requestId: string, payload: {[string
 end
 
 Transport:Initialize()
+print("[TrustSDK Identity Test][Server] Transport initialized for identity test harness")
 
 Identity:Initialize({
 	IdentityServerUrl = IDENTITY_SERVER_BASE_URL,
 	Transport = Transport,
 	UseTransport = true,
 	RequestAsync = function(request)
+		print(string.format(
+			"[TrustSDK Identity Test][Server] IdentityServer request method=%s url=%s",
+			request.Method,
+			request.Url
+		))
 		local response = HttpService:RequestAsync({
 			Url = resolveSecretUrl(request.Url) :: any,
 			Method = request.Method,
@@ -138,8 +154,16 @@ Identity:Initialize({
 				detail = string.format("%s (%s)", response.StatusMessage, response.Body)
 			end
 
+			warn(string.format("[TrustSDK Identity Test][Server] IdentityServer request failed: %s", detail))
+
 			return false, detail
 		end
+
+		print(string.format(
+			"[TrustSDK Identity Test][Server] IdentityServer request succeeded method=%s url=%s",
+			request.Method,
+			request.Url
+		))
 
 		return true, response.Body
 	end,
@@ -157,6 +181,8 @@ Identity:Initialize({
 	end,
 })
 
+print("[TrustSDK Identity Test][Server] Identity initialized in transport mode")
+
 Transport:AddServerMessageListener(TRANSPORT_LISTENER_ID, function(player: Player, plaintext: buffer)
 	local packet = decodePacket(plaintext)
 	if not packet then
@@ -164,13 +190,21 @@ Transport:AddServerMessageListener(TRANSPORT_LISTENER_ID, function(player: Playe
 	end
 
 	local requestId = tostring(packet.RequestId or "")
+	local action = tostring(packet.Action or "")
+	print(string.format(
+		"[TrustSDK Identity Test][Server] Received packet from %s action=%s requestId=%s",
+		player.Name,
+		action,
+		requestId
+	))
 	if requestId == "" then
+		warn(string.format("[TrustSDK Identity Test][Server] Dropping packet with missing requestId from %s", player.Name))
 		return true
 	end
 
 	local ok, response = pcall(function()
-		local action = tostring(packet.Action or "")
 		if action == "status" then
+			print(string.format("[TrustSDK Identity Test][Server] Handling status request requestId=%s", requestId))
 			local identity = Identity:GetPlayerIdentity(player)
 			local capabilities = sortedCapabilities(Identity:GetCapabilities())
 
@@ -189,6 +223,7 @@ Transport:AddServerMessageListener(TRANSPORT_LISTENER_ID, function(player: Playe
 		end
 
 		if action == "run_player_storage_test" then
+			print(string.format("[TrustSDK Identity Test][Server] Handling PlayerStorage test request requestId=%s", requestId))
 			assert(Identity:HasCapability("PlayerStorage"), "IdentityServer does not support PlayerStorage")
 
 			local testId = HttpService:GenerateGUID(false)
@@ -220,8 +255,14 @@ Transport:AddServerMessageListener(TRANSPORT_LISTENER_ID, function(player: Playe
 	end)
 
 	if ok then
+		print(string.format("[TrustSDK Identity Test][Server] Request completed requestId=%s", requestId))
 		sendResponse(player, requestId, response)
 	else
+		warn(string.format(
+			"[TrustSDK Identity Test][Server] Request failed requestId=%s error=%s",
+			requestId,
+			tostring(response)
+		))
 		sendResponse(player, requestId, {
 			Ok = false,
 			Error = tostring(response),
@@ -230,3 +271,5 @@ Transport:AddServerMessageListener(TRANSPORT_LISTENER_ID, function(player: Playe
 
 	return true
 end)
+
+print("[TrustSDK Identity Test][Server] Server listener registered")
