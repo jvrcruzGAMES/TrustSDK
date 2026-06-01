@@ -1,11 +1,12 @@
 --!strict
 
 local Packages = {
+	Identity = require(script.Identity),
 	Robots = require(script.Robots),
 	Transport = require(script.Transport),
 }
 
-export type PackageName = "Robots" | "Transport"
+export type PackageName = "Identity" | "Robots" | "Transport"
 
 local TrustSDK = {}
 

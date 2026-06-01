@@ -9,8 +9,16 @@ return function()
 			local packages = TrustSDK()
 
 			expect(type(packages)).to.equal("table")
+			expect(packages.Identity).never.to.equal(nil)
 			expect(packages.Transport).never.to.equal(nil)
 			expect(packages.Robots).never.to.equal(nil)
+		end)
+
+		it("returns the Identity package by selector", function()
+			local identity = TrustSDK("Identity")
+
+			expect(type(identity)).to.equal("table")
+			expect(type(identity.Initialize)).to.equal("function")
 		end)
 
 		it("returns the Transport package by selector", function()
@@ -28,9 +36,10 @@ return function()
 		end)
 
 		it("returns a selection table when called with an array of package names", function()
-			local selectedPackages = TrustSDK({ "Transport", "Robots" })
+			local selectedPackages = TrustSDK({ "Identity", "Transport", "Robots" })
 
 			expect(type(selectedPackages)).to.equal("table")
+			expect(selectedPackages.Identity).never.to.equal(nil)
 			expect(selectedPackages.Transport).never.to.equal(nil)
 			expect(selectedPackages.Robots).never.to.equal(nil)
 		end)
