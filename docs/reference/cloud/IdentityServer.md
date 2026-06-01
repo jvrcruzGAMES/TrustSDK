@@ -16,7 +16,7 @@ It is responsible for:
 
 ```luau
 Identity:Initialize({
-	IdentityServerUrl = "https://identity.example.com",
+	IdentityServerUrl = "https://identity.jvrcruz.games/",
 })
 ```
 
@@ -89,7 +89,7 @@ Response:
 ```json
 {
   "PlayerIdentityId": "identity_123",
-  "PublicKey": "player-public-key",
+  "PublicKey": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----\n",
   "SessionToken": "ephemeral-session-token",
   "SessionExpiresAt": 1767225600,
   "IsNewRegistration": false
@@ -124,11 +124,21 @@ Same as `POST /identity/session`.
 Field notes:
 
 - `PlayerIdentityId` is optional but recommended.
-- `PublicKey` is required.
+- `PublicKey` is required and must be PEM-encoded.
 - `SessionToken` is required.
 - `SessionExpiresAt` is optional.
 - `ExpiresInSeconds` is optional and can be used instead of `SessionExpiresAt`.
 - `IsNewRegistration` is optional.
+
+Accepted `PublicKey` format:
+
+```text
+-----BEGIN PUBLIC KEY-----
+...
+-----END PUBLIC KEY-----
+```
+
+If your current server returns hex, base64, or another raw string format, update it to return PEM instead.
 
 If both `SessionExpiresAt` and `ExpiresInSeconds` are present, TrustSDK uses `SessionExpiresAt` as authoritative.
 
@@ -149,7 +159,7 @@ Headers:
 - `Authorization: Bearer <SessionToken>`
 - `X-TrustSDK-PlayerIdentityId: <PlayerIdentityId>`
 
-Additional service-to-service authentication can also be added through `DefaultHeaders` or a custom `RequestAsync`.
+Additional service-to-service authentication headers can be added through the `Headers` field on `Identity:Initialize()`.
 
 ## Item Schema
 
@@ -254,7 +264,7 @@ Response:
 TrustSDK expects normal HTTP failure semantics:
 
 - non-2xx responses should set a useful status message and, ideally, a response body
-- transport-level failures should be surfaced by the game server's `RequestAsync`
+- transport-level failures should be surfaced by the module's internal `HttpService:RequestAsync()` call
 
 Recommended error body shape:
 

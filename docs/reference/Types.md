@@ -35,7 +35,7 @@ type RobloxIdentity = {
 ```luau
 type PlayerIdentity = {
 	PlayerIdentityId: string?,
-	PublicKey: string,
+	PublicKey: string, -- PEM-encoded public key
 	SessionToken: string,
 	SessionExpiresAt: number?,
 	IsNewRegistration: boolean,
@@ -49,7 +49,7 @@ type PlayerIdentity = {
 ```luau
 type IdentityServerResponse = {
 	PlayerIdentityId: string?,
-	PublicKey: string,
+	PublicKey: string, -- PEM-encoded public key
 	SessionToken: string,
 	SessionExpiresAt: number?,
 	ExpiresInSeconds: number?,
@@ -87,23 +87,6 @@ type PlayerStorageKeysResponse = {
 }
 ```
 
-## `RequestOptions`
-
-```luau
-type RequestOptions = {
-	Url: string,
-	Method: string,
-	Headers: {[string]: string},
-	Body: string,
-}
-```
-
-## `RequestAsync`
-
-```luau
-type RequestAsync = (request: RequestOptions) -> (boolean, string)
-```
-
 ## `TransportModule`
 
 This is the transport interface `Identity` expects when `UseTransport` is enabled.
@@ -131,10 +114,9 @@ type ServerConfig = {
 	Transport: TransportModule?,
 	UseTransport: boolean?,
 	RemoteParent: Instance?,
-	DefaultHeaders: {[string]: string}?,
+	Headers: {[string]: any}?,
 	SessionRefreshIntervalSeconds: number?,
 	RequestTimeoutSeconds: number?,
-	RequestAsync: RequestAsync?,
 	OnIdentityUpdated: ((Player, PlayerIdentity) -> ())?,
 	OnIdentityFailed: ((Player, string) -> ())?,
 }

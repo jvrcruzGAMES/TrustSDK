@@ -17,6 +17,7 @@ local TRANSPORT_LISTENER_ID = "TrustSDK.Identity"
 local TRANSPORT_MESSAGE_PREFIX = "__TrustSDK_Identity__:"
 local PLAYER_IDENTITY_CAPABILITY = "PlayerIdentity"
 local PLAYER_STORAGE_CAPABILITY = "PlayerStorage"
+local PEM_PUBLIC_KEY_PATTERN = "^%-%-%-%-%-BEGIN PUBLIC KEY%-%-%-%-%-%s+[%w%+/%=%s]+%s+%-%-%-%-%-END PUBLIC KEY%-%-%-%-%-%s*$"
 
 export type RobloxIdentity = {
 	UserId: number,
@@ -69,14 +70,6 @@ export type PlayerStorageKeysResponse = {
 	Keys: {string},
 }
 
-export type RequestOptions = {
-	Url: string,
-	Method: string,
-	Headers: {[string]: string},
-	Body: string,
-}
-
-export type RequestAsync = (request: RequestOptions) -> (boolean, string)
 export type TransportModule = {
 	AddServerMessageListener: (self: any, listenerId: string, listener: (Player, buffer) -> boolean?) -> (),
 	RemoveServerMessageListener: (self: any, listenerId: string) -> (),
@@ -95,10 +88,9 @@ export type ServerConfig = {
 	Transport: TransportModule?,
 	UseTransport: boolean?,
 	RemoteParent: Instance?,
-	DefaultHeaders: {[string]: string}?,
+	Headers: {[string]: any}?,
 	SessionRefreshIntervalSeconds: number?,
 	RequestTimeoutSeconds: number?,
-	RequestAsync: RequestAsync?,
 	OnIdentityUpdated: ((Player, PlayerIdentity) -> ())?,
 	OnIdentityFailed: ((Player, string) -> ())?,
 }
@@ -131,10 +123,9 @@ type ServerState = {
 	SessionEndpointPath: string,
 	RefreshEndpointPath: string,
 	PlayerStorageEndpointPath: string,
-	DefaultHeaders: {[string]: string},
+	Headers: {[string]: any},
 	SessionRefreshIntervalSeconds: number,
 	RequestTimeoutSeconds: number,
-	RequestAsync: RequestAsync,
 	CapabilitySet: {[string]: boolean},
 	IdentitiesByPlayer: {[Player]: IdentityRecord},
 	RefreshGenerationByPlayer: {[Player]: number},
@@ -320,6 +311,11 @@ local function collectRobloxIdentity(player: Player): RobloxIdentity
 		localeId = localeResult
 	end
 
+	local jobId = game.JobId
+	if jobId == "" then
+		jobId = string.format("studio-%d", game.PlaceId)
+	end
+
 	return {
 		UserId = player.UserId,
 		Username = player.Name,
@@ -331,7 +327,7 @@ local function collectRobloxIdentity(player: Player): RobloxIdentity
 		LocaleId = localeId,
 		PlaceId = game.PlaceId,
 		GameId = tostring(game.GameId),
-		JobId = game.JobId,
+		JobId = jobId,
 	}
 end
 
@@ -341,30 +337,12 @@ local function buildUrl(baseUrl: string, path: string): string
 	return trimmedBase .. trimmedPath
 end
 
-local function defaultRequestAsync(request: RequestOptions): (boolean, string)
-	local response = HttpService:RequestAsync({
-		Url = request.Url,
-		Method = request.Method,
-		Headers = request.Headers,
-		Body = request.Body,
-	})
-
-	if not response.Success then
-		local detail = response.StatusMessage
-		if type(response.Body) == "string" and response.Body ~= "" then
-			detail = string.format("%s (%s)", response.StatusMessage, response.Body)
-		end
-		return false, detail
-	end
-
-	return true, response.Body
-end
-
 local function decodeIdentityServerResponse(rawBody: string): IdentityServerResponse
 	local decoded = HttpService:JSONDecode(rawBody)
 	assert(type(decoded) == "table", "IdentityServer response must be a JSON object")
 	assert(type(decoded.PublicKey) == "string" and decoded.PublicKey ~= "", "IdentityServer response missing PublicKey")
 	assert(type(decoded.SessionToken) == "string" and decoded.SessionToken ~= "", "IdentityServer response missing SessionToken")
+	assert(string.match(decoded.PublicKey, PEM_PUBLIC_KEY_PATTERN) ~= nil, "IdentityServer response PublicKey must be PEM encoded")
 
 	return decoded :: IdentityServerResponse
 end
@@ -416,29 +394,48 @@ local function decodePlayerStorageKeys(rawBody: string): {string}
 	return keys
 end
 
-local function requestJson(state: ServerState, method: string, endpointPath: string, bodyTable: {[string]: any}?, extraHeaders: {[string]: string}?): string
-	local headers = table.clone(state.DefaultHeaders)
+local function requestJson(state: ServerState, method: string, endpointPath: string, bodyTable: {[string]: any}?, extraHeaders: {[string]: any}?): string
+	local headers = table.clone(state.Headers)
 	if extraHeaders then
 		for key, value in extraHeaders do
 			headers[key] = value
 		end
 	end
 
-	local body = ""
-	if bodyTable ~= nil then
-		headers["Content-Type"] = "application/json"
-		body = HttpService:JSONEncode(bodyTable)
-	end
-
-	local success, responseOrError = state.RequestAsync({
+	local requestOptions = {
 		Url = buildUrl(state.IdentityServerUrl, endpointPath),
 		Method = method,
 		Headers = headers,
-		Body = body,
-	})
+	}
 
-	assert(success, string.format("IdentityServer request failed: %s", tostring(responseOrError)))
-	return responseOrError
+	if bodyTable ~= nil then
+		headers["Content-Type"] = "application/json"
+		(requestOptions :: any).Body = HttpService:JSONEncode(bodyTable)
+	end
+
+	local response = HttpService:RequestAsync(requestOptions)
+
+	if not response.Success then
+		local statusCode = tostring(response.StatusCode)
+		local statusMessage = tostring(response.StatusMessage or "")
+		local responseBody = if type(response.Body) == "string" then response.Body else ""
+
+		local detailParts = {
+			string.format("status=%s", statusCode),
+		}
+
+		if statusMessage ~= "" then
+			table.insert(detailParts, string.format("message=%s", statusMessage))
+		end
+
+		if responseBody ~= "" then
+			table.insert(detailParts, string.format("body=%s", responseBody))
+		end
+
+		error(string.format("IdentityServer request failed: %s", table.concat(detailParts, " ")), 2)
+	end
+
+	return response.Body
 end
 
 local function requestCapabilities(state: ServerState): {[string]: boolean}
@@ -473,7 +470,7 @@ local function requestIdentityFromServer(state: ServerState, player: Player, end
 	}
 end
 
-local function buildPlayerStorageHeaders(identity: IdentityRecord): {[string]: string}
+local function buildPlayerStorageHeaders(identity: IdentityRecord): {[string]: any}
 	return {
 		["Authorization"] = string.format("Bearer %s", identity.SessionToken),
 		["X-TrustSDK-PlayerIdentityId"] = identity.PlayerIdentityId or "",
@@ -612,10 +609,9 @@ local function buildServerState(config: ServerConfig): ServerState
 		SessionEndpointPath = config.SessionEndpointPath or "/identity/session",
 		RefreshEndpointPath = config.RefreshEndpointPath or "/identity/refresh",
 		PlayerStorageEndpointPath = config.PlayerStorageEndpointPath or "/storage",
-		DefaultHeaders = table.clone(config.DefaultHeaders or {}),
+		Headers = table.clone(config.Headers or {}),
 		SessionRefreshIntervalSeconds = math.max(60, config.SessionRefreshIntervalSeconds or TOKEN_REFRESH_INTERVAL_SECONDS),
 		RequestTimeoutSeconds = math.max(1, config.RequestTimeoutSeconds or REQUEST_TIMEOUT_SECONDS),
-		RequestAsync = config.RequestAsync or defaultRequestAsync,
 		CapabilitySet = {},
 		IdentitiesByPlayer = {},
 		RefreshGenerationByPlayer = {},

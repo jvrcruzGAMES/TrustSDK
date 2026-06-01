@@ -18,10 +18,9 @@ Server config fields:
 - `Transport: Transport?`
 - `UseTransport: boolean?`
 - `RemoteParent: Instance?`
-- `DefaultHeaders: {[string]: string}?`
+- `Headers: {[string]: any}?`
 - `SessionRefreshIntervalSeconds: number?`
 - `RequestTimeoutSeconds: number?`
-- `RequestAsync: ((request) -> (boolean, string))?`
 - `OnIdentityUpdated: ((Player, PlayerIdentity) -> ())?`
 - `OnIdentityFailed: ((Player, string) -> ())?`
 
@@ -40,6 +39,12 @@ Notes:
 - In transport mode, the client should complete the `Transport` handshake before expecting identity sync.
 
 ## Identity Access
+
+`Identity:GetPlayerIdentity()` and related key helpers expose the external public key exactly as returned by the `IdentityServer`.
+
+Current required format:
+
+- PEM-encoded public key string
 
 ## `Identity:GetPlayerIdentity(player)`
 

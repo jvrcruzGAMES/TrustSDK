@@ -7,11 +7,11 @@ local TrustSDK = require(ReplicatedStorage.TrustSDK)
 local Identity = TrustSDK("Identity")
 local Transport = TrustSDK("Transport")
 
-local IDENTITY_SERVER_BASE_URL = "https://trustsdk.identity.test"
+local IDENTITY_SERVER_BASE_URL = "https://identity.jvrcruz.games/"
 local TRANSPORT_LISTENER_ID = "TrustSDK.IdentityTest"
 local MESSAGE_PREFIX = "__TrustSDK_IdentityTest__:"
+local IDENTITY_READY_TIMEOUT_SECONDS = 10
 
-local BASE_URL_SECRET_NAME = "identity_base_url"
 local BEARER_TOKEN_SECRET_NAME = "identity_bearer_token"
 
 print("[TrustSDK Identity Test][Server] Booting identity test server harness")
@@ -29,41 +29,14 @@ local function getConfiguredSecret(secretName: string)
 	return secretOrError
 end
 
-local baseUrlSecret = getConfiguredSecret(BASE_URL_SECRET_NAME)
 local bearerTokenSecret = getConfiguredSecret(BEARER_TOKEN_SECRET_NAME)
 
-if not baseUrlSecret or not bearerTokenSecret then
-	warn("[TrustSDK Identity Test] Identity test bootstrap skipped. Configure secrets identity_base_url and identity_bearer_token in Creator Dashboard.")
+if not bearerTokenSecret then
+	warn("[TrustSDK Identity Test] Identity test bootstrap skipped. Configure secret identity_bearer_token in Creator Dashboard.")
 	return
 end
 
-print("[TrustSDK Identity Test][Server] Loaded required secrets")
-
-local function buildAuthedHeaders(baseHeaders: {[string]: any}?): {[string]: any}
-	local headers = {}
-
-	if baseHeaders then
-		for key, value in baseHeaders do
-			headers[key] = value
-		end
-	end
-
-	headers["Authorization"] = bearerTokenSecret:AddPrefix("Bearer ")
-	headers["Content-Type"] = "application/json"
-
-	return headers
-end
-
-local function resolveSecretUrl(requestUrl: string)
-	assert(string.sub(requestUrl, 1, #IDENTITY_SERVER_BASE_URL) == IDENTITY_SERVER_BASE_URL, "Unexpected IdentityServer URL")
-
-	local suffix = string.sub(requestUrl, #IDENTITY_SERVER_BASE_URL + 1)
-	if suffix == "" then
-		suffix = "/"
-	end
-
-	return baseUrlSecret:AddSuffix(suffix)
-end
+print("[TrustSDK Identity Test][Server] Loaded required bearer token secret")
 
 local function encodePacket(payload: {[string]: any}): string
 	return MESSAGE_PREFIX .. HttpService:JSONEncode(payload)
@@ -114,6 +87,21 @@ local function serializeStorageItem(item)
 	}
 end
 
+local function waitForPlayerIdentity(player: Player, timeoutSeconds: number)
+	local deadline = os.clock() + timeoutSeconds
+
+	while os.clock() < deadline do
+		local identity = Identity:GetPlayerIdentity(player)
+		if identity then
+			return identity
+		end
+
+		task.wait(0.25)
+	end
+
+	return nil
+end
+
 local function sendResponse(player: Player, requestId: string, payload: {[string]: any})
 	print(string.format(
 		"[TrustSDK Identity Test][Server] Sending response to %s requestId=%s ok=%s",
@@ -151,38 +139,9 @@ Identity:Initialize({
 	IdentityServerUrl = IDENTITY_SERVER_BASE_URL,
 	Transport = Transport,
 	UseTransport = true,
-	RequestAsync = function(request)
-		print(string.format(
-			"[TrustSDK Identity Test][Server] IdentityServer request method=%s url=%s",
-			request.Method,
-			request.Url
-		))
-		local response = HttpService:RequestAsync({
-			Url = resolveSecretUrl(request.Url) :: any,
-			Method = request.Method,
-			Headers = buildAuthedHeaders(request.Headers),
-			Body = request.Body,
-		})
-
-		if not response.Success then
-			local detail = response.StatusMessage
-			if type(response.Body) == "string" and response.Body ~= "" then
-				detail = string.format("%s (%s)", response.StatusMessage, response.Body)
-			end
-
-			warn(string.format("[TrustSDK Identity Test][Server] IdentityServer request failed: %s", detail))
-
-			return false, detail
-		end
-
-		print(string.format(
-			"[TrustSDK Identity Test][Server] IdentityServer request succeeded method=%s url=%s",
-			request.Method,
-			request.Url
-		))
-
-		return true, response.Body
-	end,
+	Headers = {
+		["Authorization"] = bearerTokenSecret:AddPrefix("Bearer "),
+	},
 	OnIdentityUpdated = function(player, identity)
 		print(string.format(
 			"[TrustSDK Identity Test] Synced %s (%d) publicKey=%s newRegistration=%s",
@@ -234,6 +193,7 @@ Transport:AddServerMessageListener(TRANSPORT_LISTENER_ID, function(player: Playe
 				Ok = true,
 				Capabilities = capabilities,
 				HasPlayerStorage = Identity:HasCapability("PlayerStorage"),
+				IdentityReady = identity ~= nil,
 				PlayerIdentity = if identity then {
 					PlayerIdentityId = identity.PlayerIdentityId,
 					PublicKey = identity.PublicKey,
@@ -247,6 +207,9 @@ Transport:AddServerMessageListener(TRANSPORT_LISTENER_ID, function(player: Playe
 		if action == "run_player_storage_test" then
 			print(string.format("[TrustSDK Identity Test][Server] Handling PlayerStorage test request requestId=%s", requestId))
 			assert(Identity:HasCapability("PlayerStorage"), "IdentityServer does not support PlayerStorage")
+
+			local identity = waitForPlayerIdentity(player, IDENTITY_READY_TIMEOUT_SECONDS)
+			assert(identity ~= nil, string.format("Timed out waiting for Identity session for player %s", player.Name))
 
 			local testId = HttpService:GenerateGUID(false)
 			local storageKey = string.format("trustsdk:test:%d:%s", player.UserId, testId)

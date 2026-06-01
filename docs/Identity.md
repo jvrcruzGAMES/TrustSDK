@@ -78,7 +78,7 @@ Response body:
 ```json
 {
   "PlayerIdentityId": "identity_123",
-  "PublicKey": "player-public-key",
+  "PublicKey": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----\n",
   "SessionToken": "ephemeral-session-token",
   "SessionExpiresAt": 1767225600,
   "IsNewRegistration": false
@@ -86,6 +86,8 @@ Response body:
 ```
 
 `SessionExpiresAt` can be replaced by `ExpiresInSeconds` if your server prefers relative expiry.
+
+`PublicKey` must be returned as a PEM-encoded public key string.
 
 ## PlayerStorage
 
@@ -123,7 +125,7 @@ local Identity = TrustSDK("Identity")
 
 Identity:Initialize({
 	IdentityServerUrl = "https://identity.example.com",
-	DefaultHeaders = {
+	Headers = {
 		["Authorization"] = "Bearer your-service-token",
 	},
 	OnIdentityUpdated = function(player, identity)
@@ -174,7 +176,6 @@ If you want the server URL and bearer token to come from Roblox secrets, use `Ht
 
 Required secrets for the included test harness:
 
-- `identity_base_url`
 - `identity_bearer_token`
 
 Reference implementation: [IdentityTest.server.luau](C:/Users/jvrcruz/Documents/Projects/Roblox/TrustSDK/src/server/IdentityTest.server.luau)
@@ -183,7 +184,8 @@ Notes:
 
 - Roblox secrets are only available on live servers, not in local Studio play sessions.
 - Secrets can be used in headers and URLs, but not in the request body.
-- The test harness uses a custom `RequestAsync` callback so the module can keep using JSON request bodies while the base URL and bearer token stay secret-managed.
+- The included test harness targets `https://identity.jvrcruz.games/`.
+- Pass any extra request headers through `Headers` when initializing `Identity`.
 - The included identity test harness uses `Transport` for both Identity sync and the React test UI request/response flow instead of standalone remotes.
 - Type `!identity` in chat to open the React test UI for capability inspection and the PlayerStorage test flow.
 
