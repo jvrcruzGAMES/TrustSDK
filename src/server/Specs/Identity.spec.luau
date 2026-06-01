@@ -12,7 +12,13 @@ local expectedMethods = {
 	"GetLocalPublicKey",
 	"GetPlayerSessionToken",
 	"GetLocalSessionToken",
+	"GetCapabilities",
+	"HasCapability",
 	"RefreshPlayerSession",
+	"GetPlayerStorageItem",
+	"GetPlayerStorageKeys",
+	"SetPlayerStorageItem",
+	"DeletePlayerStorageItem",
 	"AddClientIdentityListener",
 	"RemoveClientIdentityListener",
 }

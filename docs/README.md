@@ -6,6 +6,15 @@
 - [Transport](C:/Users/jvrcruz/Documents/Projects/Roblox/TrustSDK/docs/Transport.md)
 - [Robots](C:/Users/jvrcruz/Documents/Projects/Roblox/TrustSDK/docs/Robots.md)
 
+## Reference
+
+- [API Reference Index](C:/Users/jvrcruz/Documents/Projects/Roblox/TrustSDK/docs/reference/README.md)
+- [TrustSDK Root Reference](C:/Users/jvrcruz/Documents/Projects/Roblox/TrustSDK/docs/reference/Root.md)
+- [Identity Reference](C:/Users/jvrcruz/Documents/Projects/Roblox/TrustSDK/docs/reference/Identity.md)
+- [Transport Reference](C:/Users/jvrcruz/Documents/Projects/Roblox/TrustSDK/docs/reference/Transport.md)
+- [Robots Reference](C:/Users/jvrcruz/Documents/Projects/Roblox/TrustSDK/docs/reference/Robots.md)
+- [Type Reference](C:/Users/jvrcruz/Documents/Projects/Roblox/TrustSDK/docs/reference/Types.md)
+
 ## Package Selection
 
 The root package is a selector for TrustSDK modules.

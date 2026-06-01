@@ -1,6 +1,5 @@
 --!strict
 
-local DataStoreService = game:GetService("DataStoreService")
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -25,7 +24,6 @@ local REKEY_SIGNAL_NAME = "RekeySignal"
 
 local SERVER_PUBLIC_KEY_ATTRIBUTE = "ServerEd25519PublicKeyHex"
 local SERVER_STATIC_PUBLIC_KEY_ATTRIBUTE = "ServerStaticX25519PublicKeyHex"
-local PLAYER_IDENTITY_STORE_NAME = "TrustSDK.PlayerIdentities"
 local REKEY_INTERVAL_SECONDS = 300
 local REPLICATION_TIMEOUT_SECONDS = 15
 
@@ -33,7 +31,6 @@ local HKDF_INFO = buffer.fromstring("TrustSDK.SessionKey.v2")
 local MESSAGE_AAD = buffer.fromstring("TrustSDK.ChaCha20Poly1305.v2")
 local CLIENT_TO_SERVER_CONTEXT = buffer.fromstring("c2s")
 local SERVER_TO_CLIENT_CONTEXT = buffer.fromstring("s2c")
-local IDENTITY_BOOTSTRAP_AAD = buffer.fromstring("TrustSDK.IdentityBootstrap.v1")
 local REKEY_CONTEXT = buffer.fromstring("rekey")
 
 export type ServerConfig = {
@@ -42,7 +39,6 @@ export type ServerConfig = {
 	ServerEd25519PublicKey: buffer | string?,
 	OnServerMessage: ((Player, buffer) -> ())?,
 	RemoteParent: Instance?,
-	PlayerIdentityStoreName: string?,
 	Debug: boolean?,
 }
 
@@ -53,16 +49,10 @@ export type ClientConfig = {
 	Debug: boolean?,
 }
 
-type PlayerIdentityRecord = {
-	Version: number,
-	SecretKeyHex: string,
-	PublicKeyHex: string,
-}
-
 type Session = {
 	Key: buffer,
-	PlayerIdentitySecretKey: buffer,
-	PlayerIdentityPublicKey: buffer,
+	ClientSessionPublicKey: buffer,
+	ClientSessionSecretKey: buffer?,
 	ServerIdentityPublicKey: buffer,
 	NextOutboundSequence: number,
 	LastInboundSequence: number,
@@ -84,11 +74,6 @@ type ServerState = {
 	IdentityPublicKey: buffer,
 	StaticSecretKey: buffer?,
 	StaticPublicKey: buffer?,
-	PlayerIdentityStore: GlobalDataStore,
-	PlayerIdentitiesByUserId: {[number]: {
-		SecretKey: buffer,
-		PublicKey: buffer,
-	}},
 	HandshakeStateByPlayer: {[Player]: ServerHandshakeState},
 	RekeyStateByPlayer: {[Player]: {
 		RequestId: string,
@@ -203,24 +188,6 @@ local function coercePlaintext(payload: buffer | string): buffer
 	end
 
 	error("Payload must be a buffer or string", 3)
-end
-
-local function encodeIdentityPayload(identitySecretKey: buffer, identityPublicKey: buffer): buffer
-	local payload = {
-		identitySecretKeyHex = Conversions.ToHex(identitySecretKey),
-		identityPublicKeyHex = Conversions.ToHex(identityPublicKey),
-	}
-
-	return buffer.fromstring(HttpService:JSONEncode(payload))
-end
-
-local function decodeIdentityPayload(payload: buffer): (buffer, buffer)
-	local decoded = HttpService:JSONDecode(buffer.tostring(payload))
-	assert(type(decoded) == "table", "Identity bootstrap payload must be a JSON object")
-	assert(type(decoded.identitySecretKeyHex) == "string", "Identity bootstrap payload missing identitySecretKeyHex")
-	assert(type(decoded.identityPublicKeyHex) == "string", "Identity bootstrap payload missing identityPublicKeyHex")
-
-	return Conversions.FromHex(decoded.identitySecretKeyHex), Conversions.FromHex(decoded.identityPublicKeyHex)
 end
 
 local function buildSignatureInput(context: buffer, sequence: number, nonce: buffer, ciphertext: buffer, tag: buffer): buffer
@@ -379,57 +346,6 @@ local function publishServerPublicKeys(state: ServerState)
 	end
 end
 
-local function getIdentityStore(config: ServerConfig?): GlobalDataStore
-	local storeName = if config and config.PlayerIdentityStoreName then config.PlayerIdentityStoreName else PLAYER_IDENTITY_STORE_NAME
-	return DataStoreService:GetDataStore(storeName)
-end
-
-local function getPlayerIdentityStoreKey(userId: number): string
-	return string.format("player:%d", userId)
-end
-
-local function getOrCreatePlayerIdentity(state: ServerState, player: Player): {SecretKey: buffer, PublicKey: buffer}
-	local cached = state.PlayerIdentitiesByUserId[player.UserId]
-	if cached then
-		return cached
-	end
-
-	local storeKey = getPlayerIdentityStoreKey(player.UserId)
-	local success, recordOrError = pcall(function()
-		return state.PlayerIdentityStore:UpdateAsync(storeKey, function(previousValue)
-			if type(previousValue) == "table"
-				and type(previousValue.SecretKeyHex) == "string"
-				and type(previousValue.PublicKeyHex) == "string" then
-				return previousValue
-			end
-
-			local secretKey = randomSecretKey()
-			local publicKey = EdDSA.PublicKey(secretKey)
-
-			return {
-				Version = 1,
-				SecretKeyHex = Conversions.ToHex(secretKey),
-				PublicKeyHex = Conversions.ToHex(publicKey),
-			} :: PlayerIdentityRecord
-		end)
-	end)
-
-	assert(success, string.format("Failed to load player identity for %s: %s", player.Name, tostring(recordOrError)))
-
-	local record = recordOrError :: any
-	assert(type(record) == "table", "Player identity record must be a table")
-	assert(type(record.SecretKeyHex) == "string", "Player identity record missing SecretKeyHex")
-	assert(type(record.PublicKeyHex) == "string", "Player identity record missing PublicKeyHex")
-
-	local identity = {
-		SecretKey = Conversions.FromHex(record.SecretKeyHex),
-		PublicKey = Conversions.FromHex(record.PublicKeyHex),
-	}
-
-	state.PlayerIdentitiesByUserId[player.UserId] = identity
-	return identity
-end
-
 local function beginServerRekey(state: ServerState, player: Player): boolean
 	local session = state.SessionsByPlayer[player]
 	if not session then
@@ -478,8 +394,6 @@ local function buildServerState(config: ServerConfig?): ServerState
 		IdentityPublicKey = identityPublicKey,
 		StaticSecretKey = staticSecretKey,
 		StaticPublicKey = staticPublicKey,
-		PlayerIdentityStore = getIdentityStore(config),
-		PlayerIdentitiesByUserId = {},
 		HandshakeStateByPlayer = {},
 		RekeyStateByPlayer = {},
 		SessionsByPlayer = {},
@@ -508,7 +422,7 @@ local function buildServerState(config: ServerConfig?): ServerState
 		}
 	end
 
-	state.HandshakeComplete.OnServerInvoke = function(player: Player, clientEphemeralPublic: buffer)
+	state.HandshakeComplete.OnServerInvoke = function(player: Player, clientEphemeralPublic: buffer, clientSessionPublicKey: buffer)
 		local pending = state.HandshakeStateByPlayer[player]
 		if not pending then
 			return false, "Missing server handshake state"
@@ -518,38 +432,31 @@ local function buildServerState(config: ServerConfig?): ServerState
 			return false, "Client public key must be a buffer"
 		end
 
-		local ok, bootstrapOrError = pcall(function()
+		if typeof(clientSessionPublicKey) ~= "buffer" then
+			return false, "Client session signing public key must be a buffer"
+		end
+
+		local ok, errorMessage = pcall(function()
 			local sharedSecret = select(1, X25519.Exchange(pending.ServerEphemeralMasked, clientEphemeralPublic))
 			local sessionKey = deriveSessionKey(sharedSecret, pending.ServerEphemeralPublic, clientEphemeralPublic)
-			local playerIdentity = getOrCreatePlayerIdentity(state, player)
 
 			state.SessionsByPlayer[player] = {
 				Key = sessionKey,
-				PlayerIdentitySecretKey = playerIdentity.SecretKey,
-				PlayerIdentityPublicKey = playerIdentity.PublicKey,
+				ClientSessionPublicKey = clientSessionPublicKey,
+				ClientSessionSecretKey = nil,
 				ServerIdentityPublicKey = state.IdentityPublicKey,
 				NextOutboundSequence = 0,
 				LastInboundSequence = -1,
 			}
 			state.HandshakeStateByPlayer[player] = nil
-
-			local bootstrapPlaintext = encodeIdentityPayload(playerIdentity.SecretKey, playerIdentity.PublicKey)
-			local nonce, ciphertext, tag = encryptPayload(sessionKey, bootstrapPlaintext, IDENTITY_BOOTSTRAP_AAD)
-
-			return {
-				IdentityNonce = nonce,
-				IdentityCiphertext = ciphertext,
-				IdentityTag = tag,
-				PlayerIdentityPublicKey = playerIdentity.PublicKey,
-			}
 		end)
 
 		if not ok then
 			state.HandshakeStateByPlayer[player] = nil
-			return false, tostring(bootstrapOrError)
+			return false, tostring(errorMessage)
 		end
 
-		return true, bootstrapOrError
+		return true
 	end
 
 	state.RekeyRequest.OnServerInvoke = function(player: Player, requestId: string, clientEphemeralPublic: buffer)
@@ -604,7 +511,7 @@ local function buildServerState(config: ServerConfig?): ServerState
 		end
 
 		local signatureInput = buildSignatureInput(CLIENT_TO_SERVER_CONTEXT, sequence, nonce, ciphertext, tag)
-		if not EdDSA.Verify(signatureInput, session.PlayerIdentityPublicKey, signature) then
+		if not EdDSA.Verify(signatureInput, session.ClientSessionPublicKey, signature) then
 			warn(string.format("Rejected forged secure message from %s", player.Name))
 			return
 		end
@@ -804,34 +711,20 @@ function Transport:BeginClientHandshake()
 	local clientEphemeralSecret = randomSecretKey()
 	local clientEphemeralMasked = X25519.Mask(clientEphemeralSecret)
 	local clientEphemeralPublic = X25519.PublicKey(clientEphemeralMasked)
+	local clientSessionSecretKey = randomSecretKey()
+	local clientSessionPublicKey = EdDSA.PublicKey(clientSessionSecretKey)
 	local sharedSecret = select(1, X25519.Exchange(clientEphemeralMasked, serverEphemeralPublic))
 	local sessionKey = deriveSessionKey(sharedSecret, serverEphemeralPublic, clientEphemeralPublic)
 
-	local success, bootstrapOrError = clientState.HandshakeComplete:InvokeServer(clientEphemeralPublic)
+	local success, errorMessage = clientState.HandshakeComplete:InvokeServer(clientEphemeralPublic, clientSessionPublicKey)
 	if not success then
-		error(bootstrapOrError or "HandshakeComplete failed")
+		error(errorMessage or "HandshakeComplete failed")
 	end
-
-	assert(type(bootstrapOrError) == "table", "HandshakeComplete returned an invalid bootstrap payload")
-	assert(typeof(bootstrapOrError.IdentityNonce) == "buffer", "HandshakeComplete missing IdentityNonce")
-	assert(typeof(bootstrapOrError.IdentityCiphertext) == "buffer", "HandshakeComplete missing IdentityCiphertext")
-	assert(typeof(bootstrapOrError.IdentityTag) == "buffer", "HandshakeComplete missing IdentityTag")
-
-	local bootstrapPlaintext = decryptPayload(
-		sessionKey,
-		bootstrapOrError.IdentityNonce,
-		bootstrapOrError.IdentityCiphertext,
-		bootstrapOrError.IdentityTag,
-		IDENTITY_BOOTSTRAP_AAD
-	)
-	assert(bootstrapPlaintext, "Failed to decrypt assigned player identity")
-
-	local playerIdentitySecretKey, playerIdentityPublicKey = decodeIdentityPayload(bootstrapPlaintext)
 
 	clientState.Session = {
 		Key = sessionKey,
-		PlayerIdentitySecretKey = playerIdentitySecretKey,
-		PlayerIdentityPublicKey = playerIdentityPublicKey,
+		ClientSessionSecretKey = clientSessionSecretKey,
+		ClientSessionPublicKey = clientSessionPublicKey,
 		ServerIdentityPublicKey = clientState.ServerEd25519PublicKey,
 		NextOutboundSequence = 0,
 		LastInboundSequence = -1,
@@ -916,7 +809,8 @@ function Transport:SendToServer(payload: buffer | string)
 	local nonce, ciphertext, tag = encryptPayload(session.Key, plaintext, MESSAGE_AAD)
 	local sequence = session.NextOutboundSequence
 	local signatureInput = buildSignatureInput(CLIENT_TO_SERVER_CONTEXT, sequence, nonce, ciphertext, tag)
-	local signature = EdDSA.Sign(signatureInput, session.PlayerIdentitySecretKey, session.PlayerIdentityPublicKey)
+	assert(session.ClientSessionSecretKey, "Client session signing key is unavailable")
+	local signature = EdDSA.Sign(signatureInput, session.ClientSessionSecretKey, session.ClientSessionPublicKey)
 
 	session.NextOutboundSequence += 1
 	if clientState.Debug then
@@ -947,25 +841,6 @@ function Transport:GetServerStaticX25519PublicKey(): buffer?
 		local publicKeyHex = folder:GetAttribute(SERVER_STATIC_PUBLIC_KEY_ATTRIBUTE)
 		if type(publicKeyHex) == "string" then
 			return Conversions.FromHex(publicKeyHex)
-		end
-	end
-
-	return nil
-end
-
-function Transport:GetAssignedPlayerIdentityPublicKey(): buffer?
-	if clientState and clientState.Session then
-		return clientState.Session.PlayerIdentityPublicKey
-	end
-
-	return nil
-end
-
-function Transport:GetPlayerIdentityPublicKey(player: Player): buffer?
-	if serverState then
-		local identity = serverState.PlayerIdentitiesByUserId[player.UserId]
-		if identity then
-			return identity.PublicKey
 		end
 	end
 

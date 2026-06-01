@@ -18,8 +18,6 @@ local expectedMethods = {
 	"SendToServer",
 	"GetServerEd25519PublicKey",
 	"GetServerStaticX25519PublicKey",
-	"GetAssignedPlayerIdentityPublicKey",
-	"GetPlayerIdentityPublicKey",
 	"RequestRekey",
 	"RequestRekeyAll",
 }
