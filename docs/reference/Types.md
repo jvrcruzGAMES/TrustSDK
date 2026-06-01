@@ -35,7 +35,7 @@ type RobloxIdentity = {
 ```luau
 type PlayerIdentity = {
 	PlayerIdentityId: string?,
-	PublicKey: string, -- PEM-encoded public key
+	PublicKey: string, -- PEM-encoded signing public key
 	SessionToken: string,
 	SessionExpiresAt: number?,
 	IsNewRegistration: boolean,
@@ -49,7 +49,7 @@ type PlayerIdentity = {
 ```luau
 type IdentityServerResponse = {
 	PlayerIdentityId: string?,
-	PublicKey: string, -- PEM-encoded public key
+	PublicKey: string, -- PEM-encoded signing public key
 	SessionToken: string,
 	SessionExpiresAt: number?,
 	ExpiresInSeconds: number?,

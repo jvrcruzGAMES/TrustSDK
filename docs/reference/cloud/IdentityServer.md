@@ -10,6 +10,18 @@ It is responsible for:
 - refreshing session tokens
 - providing cross-experience `PlayerStorage`
 
+## Cryptographic Requirements
+
+The identity keypair used by `IdentityServer` must be a signing keypair.
+
+Requirements:
+
+- the private key must be able to sign data
+- the public key must be able to verify signatures produced by the paired private key
+- the public key returned to TrustSDK must be PEM-encoded
+
+The `IdentityServer` should treat this keypair as the canonical player identity keypair for external identity operations.
+
 ## Base URL
 
 `Identity:Initialize()` expects a single base URL:
@@ -140,6 +152,24 @@ Accepted `PublicKey` format:
 
 If your current server returns hex, base64, or another raw string format, update it to return PEM instead.
 
+## Session Token Requirements
+
+Session tokens are expected to be signed credentials.
+
+Requirements:
+
+- each session token should be signed by the player's private key or otherwise carry a signature verifiable against the player's public key
+- the `IdentityServer` must verify that signature before allowing actions that depend on the session token
+- the session token should encode enough information to bind it to the player identity
+- the session token should be short-lived and refreshable
+
+When TrustSDK calls privileged endpoints such as storage routes, the `IdentityServer` should:
+
+1. parse the presented session token
+2. verify its signature against the player's public key
+3. verify expiry and identity binding
+4. only then execute the requested action
+
 If both `SessionExpiresAt` and `ExpiresInSeconds` are present, TrustSDK uses `SessionExpiresAt` as authoritative.
 
 ## PlayerStorage
@@ -160,6 +190,8 @@ Headers:
 - `X-TrustSDK-PlayerIdentityId: <PlayerIdentityId>`
 
 Additional service-to-service authentication headers can be added through the `Headers` field on `Identity:Initialize()`.
+
+The presence of a bearer token alone should not be considered sufficient; the `IdentityServer` should verify the token signature before authorizing the operation.
 
 ## Item Schema
 

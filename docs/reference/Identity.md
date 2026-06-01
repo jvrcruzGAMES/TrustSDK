@@ -46,6 +46,11 @@ Current required format:
 
 - PEM-encoded public key string
 
+Cryptographic expectation:
+
+- the public key must belong to a signing keypair
+- the paired private key must be capable of signing session-related data
+
 ## `Identity:GetPlayerIdentity(player)`
 
 Server-only.

@@ -89,6 +89,29 @@ Response body:
 
 `PublicKey` must be returned as a PEM-encoded public key string.
 
+## Cryptographic Requirements
+
+The external identity keypair is expected to be a signing keypair.
+
+Requirements:
+
+- the public key must correspond to a private key that can sign data
+- the private key must be capable of producing signatures that can be verified with the public key
+- the `PublicKey` returned by the `IdentityServer` must be the PEM-encoded public half of that signing keypair
+
+Session token requirements:
+
+- the session token should be issued by the `IdentityServer` as a signed token
+- the token should be signed by the player's private key or carry a signature that can be verified against the player's public key
+- any backend action that requires a session token should verify that signature before accepting the request
+- session tokens should remain short-lived and non-persistent
+
+In practice, this means:
+
+- the game server receives the player's public key
+- the game server forwards the session token back to the `IdentityServer` on privileged identity/storage requests
+- the `IdentityServer` verifies that the session token is valid for that player identity before performing the action
+
 ## PlayerStorage
 
 `PlayerStorage` is a cross-experience per-player data store exposed by the IdentityServer.
