@@ -14,6 +14,8 @@
 - [Transport Reference](C:/Users/jvrcruz/Documents/Projects/Roblox/TrustSDK/docs/reference/Transport.md)
 - [Robots Reference](C:/Users/jvrcruz/Documents/Projects/Roblox/TrustSDK/docs/reference/Robots.md)
 - [Type Reference](C:/Users/jvrcruz/Documents/Projects/Roblox/TrustSDK/docs/reference/Types.md)
+- [Cloud Reference Index](C:/Users/jvrcruz/Documents/Projects/Roblox/TrustSDK/docs/reference/cloud/README.md)
+- [IdentityServer Reference](C:/Users/jvrcruz/Documents/Projects/Roblox/TrustSDK/docs/reference/cloud/IdentityServer.md)
 
 ## Package Selection
 
