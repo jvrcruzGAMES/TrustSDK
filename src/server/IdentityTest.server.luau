@@ -118,6 +118,8 @@ local function sendResponse(player: Player, requestId: string, payload: {[string
 	}))
 end
 
+Transport:Initialize()
+
 Identity:Initialize({
 	IdentityServerUrl = IDENTITY_SERVER_BASE_URL,
 	Transport = Transport,

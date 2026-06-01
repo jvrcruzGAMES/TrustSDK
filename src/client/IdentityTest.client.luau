@@ -17,6 +17,7 @@ local IDENTITY_LISTENER_ID = "TrustSDK.IdentityTest"
 local TRANSPORT_LISTENER_ID = "TrustSDK.IdentityTest.Client"
 local MESSAGE_PREFIX = "__TrustSDK_IdentityTest__:"
 local REQUEST_TIMEOUT_SECONDS = 10
+local REQUEST_RETRY_INTERVAL_SECONDS = 0.25
 
 local Event = RoactCompat.Event
 local e = React.createElement
@@ -146,21 +147,30 @@ local function invokeServer(payload: {[string]: any})
 		end,
 	}
 
-	local ok, errorMessage = pcall(function()
-		Transport:SendToServer(encodePacket({
-			Action = payload.Action,
-			RequestId = requestId,
-		}))
-	end)
+	task.spawn(function()
+		local deadline = os.clock() + REQUEST_TIMEOUT_SECONDS
 
-	if not ok then
-		pendingRequests[requestId] = nil
-		bindable:Destroy()
-		return {
-			Ok = false,
-			Error = tostring(errorMessage),
-		}
-	end
+		while os.clock() < deadline do
+			local ok, errorMessage = pcall(function()
+				Transport:SendToServer(encodePacket({
+					Action = payload.Action,
+					RequestId = requestId,
+				}))
+			end)
+
+			if ok then
+				return
+			end
+
+			task.wait(REQUEST_RETRY_INTERVAL_SECONDS)
+		end
+
+		local pending = pendingRequests[requestId]
+		if pending then
+			pendingRequests[requestId] = nil
+			pending.Reject("Timed out waiting for Transport to become ready for the identity test request")
+		end
+	end)
 
 	task.delay(REQUEST_TIMEOUT_SECONDS, function()
 		local pending = pendingRequests[requestId]

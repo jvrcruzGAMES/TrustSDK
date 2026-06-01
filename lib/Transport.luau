@@ -661,6 +661,17 @@ end
 function Transport:Initialize(config: ServerConfig | ClientConfig?)
 	if RunService:IsServer() then
 		if serverState then
+			local serverConfig = config :: ServerConfig?
+			if serverConfig then
+				if serverConfig.OnServerMessage then
+					serverState.OnServerMessage = serverConfig.OnServerMessage
+				end
+
+				if serverConfig.Debug ~= nil then
+					serverState.Debug = serverConfig.Debug == true
+				end
+			end
+
 			return {
 				ServerEd25519PublicKey = serverState.IdentityPublicKey,
 				ServerStaticX25519PublicKey = serverState.StaticPublicKey,
@@ -675,6 +686,17 @@ function Transport:Initialize(config: ServerConfig | ClientConfig?)
 	end
 
 	if clientState then
+		local clientConfig = config :: ClientConfig?
+		if clientConfig then
+			if clientConfig.OnClientMessage then
+				clientState.OnClientMessage = clientConfig.OnClientMessage
+			end
+
+			if clientConfig.Debug ~= nil then
+				clientState.Debug = clientConfig.Debug == true
+			end
+		end
+
 		return {
 			ServerEd25519PublicKey = clientState.ServerEd25519PublicKey,
 		}
