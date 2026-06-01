@@ -211,6 +211,11 @@ local function invokeServer(payload: {[string]: any})
 	task.delay(REQUEST_TIMEOUT_SECONDS, function()
 		local pending = pendingRequests[requestId]
 		if pending then
+			warn(string.format(
+				"[TrustSDK Identity Test][Client] Response wait timeout action=%s requestId=%s",
+				tostring(payload.Action),
+				requestId
+			))
 			pendingRequests[requestId] = nil
 			pending.Reject("Timed out waiting for identity test response")
 		end

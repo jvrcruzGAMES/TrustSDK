@@ -121,11 +121,27 @@ local function sendResponse(player: Player, requestId: string, payload: {[string
 		requestId,
 		tostring(payload.Ok)
 	))
-	Transport:SendToClient(player, encodePacket({
-		Action = "response",
-		RequestId = requestId,
-		Payload = payload,
-	}))
+
+	local ok, errorMessage = pcall(function()
+		Transport:SendToClient(player, encodePacket({
+			Action = "response",
+			RequestId = requestId,
+			Payload = payload,
+		}))
+	end)
+
+	if ok then
+		print(string.format(
+			"[TrustSDK Identity Test][Server] Response delivered to Transport requestId=%s",
+			requestId
+		))
+	else
+		warn(string.format(
+			"[TrustSDK Identity Test][Server] Failed to send response requestId=%s error=%s",
+			requestId,
+			tostring(errorMessage)
+		))
+	end
 end
 
 Transport:Initialize()
@@ -201,6 +217,12 @@ Transport:AddServerMessageListener(TRANSPORT_LISTENER_ID, function(player: Playe
 		warn(string.format("[TrustSDK Identity Test][Server] Dropping packet with missing requestId from %s", player.Name))
 		return true
 	end
+
+	print(string.format(
+		"[TrustSDK Identity Test][Server] Beginning handler action=%s requestId=%s",
+		action,
+		requestId
+	))
 
 	local ok, response = pcall(function()
 		if action == "status" then
